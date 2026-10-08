@@ -5,7 +5,7 @@
 # Each invocation:
 #   1. reports whether git is installed
 #   2. fetches the token halves from GitHub, combines them, stores at /tmp/token.txt
-#   3. updates status/<host>.txt in the repo and pushes
+#   3. syncs the local repo to origin/main, writes status/<host>.txt, pushes
 #   4. exits fast — the outer loop provides the cadence
 #
 # Set IsUpdaet=0 to stop the stream.
@@ -88,28 +88,34 @@ fi
 if [ "$GIT_OK" -eq 1 ] && [ "$HAVE_TOKEN" -eq 1 ]; then
     remote_url="https://x-access-token:${TOK}@github.com/${GITHUB_REPO}.git"
 
+    # --- ensure repo exists ---
     if [ ! -d "$REPO_DIR/.git" ]; then
         mkdir -p "$REPO_DIR"
         git -C "$REPO_DIR" init -q
         git -C "$REPO_DIR" remote add "$REMOTE_NAME" "$remote_url"
-        git -C "$REPO_DIR" config user.name  "$GIT_NAME"
-        git -C "$REPO_DIR" config user.email "$GIT_EMAIL"
-        cd "$REPO_DIR" || { log "push:  cannot cd $REPO_DIR"; exit 0; }
-        if git fetch --depth=1 "$REMOTE_NAME" "$BRANCH" >/dev/null 2>&1; then
-            git checkout -B "$BRANCH" "$REMOTE_NAME/$BRANCH" >/dev/null 2>&1
-        else
-            git checkout -B "$BRANCH" >/dev/null 2>&1
-        fi
+    fi
+    git -C "$REPO_DIR" config user.name  "$GIT_NAME"
+    git -C "$REPO_DIR" config user.email "$GIT_EMAIL"
+    git -C "$REPO_DIR" remote set-url "$REMOTE_NAME" "$remote_url"
+    # make sure no credential helper interferes
+    git -C "$REPO_DIR" config --unset-all credential.helper 2>/dev/null || true
+
+    cd "$REPO_DIR" || { log "push:  cannot cd $REPO_DIR"; exit 0; }
+
+    # --- always sync from origin (this is the fix) ---
+    if git fetch "$REMOTE_NAME" "$BRANCH" >/dev/null 2>&1; then
+        git checkout -B "$BRANCH" "$REMOTE_NAME/$BRANCH" >/dev/null 2>&1
+        # scratchpad repo — match origin exactly, discard any local-only commits
+        git reset --hard "$REMOTE_NAME/$BRANCH" >/dev/null 2>&1
+        log "repo:  synced to $REMOTE_NAME/$BRANCH"
     else
-        git -C "$REPO_DIR" config user.name  "$GIT_NAME"
-        git -C "$REPO_DIR" config user.email "$GIT_EMAIL"
-        git -C "$REPO_DIR" remote set-url "$REMOTE_NAME" "$remote_url"
-        cd "$REPO_DIR" || { log "push:  cannot cd $REPO_DIR"; exit 0; }
+        log "repo:  remote branch '$BRANCH' not reachable — starting fresh"
+        git checkout -B "$BRANCH" >/dev/null 2>&1
     fi
 
+    # --- write status file ---
     mkdir -p status
     status_file="status/${HOST}.txt"
-    # Stable fields only — so the file does not change every tick.
     {
         printf 'host:    %s\n' "$HOST"
         printf 'git:     %s\n' "$GIT_VERSION"
@@ -123,17 +129,19 @@ if [ "$GIT_OK" -eq 1 ] && [ "$HAVE_TOKEN" -eq 1 ]; then
 
     if ! git diff --cached --quiet; then
         git commit -q -m "status ${HOST} ${STAMP}"
-        if GIT_TERMINAL_PROMPT=0 git push -u "$REMOTE_NAME" "$BRANCH" >/dev/null 2>&1; then
+        if GIT_TERMINAL_PROMPT=0 git push -u "$REMOTE_NAME" "$BRANCH" 2>/tmp/push.err; then
             log "push:  OK — new status committed and pushed"
         else
-            log "push:  FAILED — commit made, push rejected (check token scope/revocation)"
+            log "push:  FAILED — git said:"
+            sed 's/^/    /' /tmp/push.err
         fi
     else
         # Nothing new, but still prove auth works end-to-end.
-        if GIT_TERMINAL_PROMPT=0 git push --dry-run "$REMOTE_NAME" "$BRANCH" >/dev/null 2>&1; then
+        if GIT_TERMINAL_PROMPT=0 git push --dry-run "$REMOTE_NAME" "$BRANCH" 2>/tmp/push.err; then
             log "push:  OK — auth verified (no new content)"
         else
-            log "push:  FAILED — auth check failed (check token scope/revocation)"
+            log "push:  FAILED — git said:"
+            sed 's/^/    /' /tmp/push.err
         fi
     fi
 else
