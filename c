@@ -1,25 +1,40 @@
 #!/bin/bash
 set -euo pipefail
 
-OWNER="x01234789"
-REPO="test22"
+# --- config ---
+REPO="x01234789/test22"
 BRANCH="main"
-H1="https://raw.githubusercontent.com/x01234789/test22/refs/heads/main/h1.txt"
-H2="https://raw.githubusercontent.com/x01234789/test22/refs/heads/main/h5.txt"
+H1_URL="https://raw.githubusercontent.com/x01234789/test22/refs/heads/main/h1.txt"
+H2_URL="https://raw.githubusercontent.com/x01234789/test22/refs/heads/main/h5.txt"
 
-T="$(wget -qO- "$H1" | tr -d '[:space:]')$(wget -qO- "$H2" | tr -d '[:space:]')"
-[ -n "$T" ] || { echo "failed to build token"; exit 1; }
+# --- work in a temp dir, clean up on exit ---
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
 
-W="$(mktemp -d)"
-git clone --depth=1 --branch "$BRANCH" \
-  "https://x-access-token:${T}@github.com/${OWNER}/${REPO}.git" "$W"
+# --- fetch token halves ---
+h1="$(wget -qO- "$H1_URL" | tr -d '[:space:]')"
+h2="$(wget -qO- "$H2_URL" | tr -d '[:space:]')"
+[ -n "$h1" ] && [ -n "$h2" ] || { echo "ERROR: token halves empty" >&2; exit 1; }
+TOKEN="${h1}${h2}"
 
-cd "$W"
-printf 'ok\n' > test2.txt
-git config user.name "updater-bot"
+# --- clone repo with token ---
+git clone "https://x-access-token:${TOKEN}@github.com/${REPO}.git" "$WORKDIR/repo" >/dev/null 2>&1 || {
+    echo "ERROR: git clone failed" >&2
+    exit 1
+}
+
+cd "$WORKDIR/repo"
+
+# --- configure git identity (only needed for commit) ---
+git config user.name  "updater-bot"
 git config user.email "updater-bot@users.noreply.github.com"
-git add test2.txt
-git commit -q -m "test2.txt: ok"
 
-GIT_TERMINAL_PROMPT=0 git push origin "$BRANCH"
-echo "pushed test2.txt"
+# --- write the test file ---
+echo "test" > test.txt
+
+# --- commit and push ---
+git add test.txt
+git commit -q -m "test from debian $(date -u +%Y%m%dT%H%M%SZ)"
+git push -q origin "$BRANCH"
+
+echo "SUCCESS: pushed test.txt"
