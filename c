@@ -23,7 +23,7 @@ GIT_EMAIL="updater-bot@users.noreply.github.com"
 TOKEN_FILE="/tmp/token.txt"
 REPO_DIR="/var/lib/updater/logs-repo"
 REMOTE_NAME="origin"
-PLACEHOLDER="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"
+PLACEHOLDER="000"
 
 HOST="$(hostname -s 2>/dev/null || echo unknown-host)"
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
