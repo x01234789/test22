@@ -12,7 +12,7 @@ set -u
 # CONFIG
 # ==================================================================
 GITHUB_REPO="x01234789/test22"
-GITHUB_TOKEN="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"   # only used to seed /tmp/token.txt
+GITHUB_TOKEN=""   # only used to seed /tmp/token.txt
 BRANCH="main"
 GIT_NAME="updater-bot"
 GIT_EMAIL="updater-bot@users.noreply.github.com"
@@ -21,7 +21,7 @@ GIT_EMAIL="updater-bot@users.noreply.github.com"
 REPO_DIR="/var/lib/updater/logs-repo"
 TOKEN_FILE="/tmp/token.txt"
 REMOTE_NAME="origin"
-PLACEHOLDER="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"
+PLACEHOLDER=""
 
 HOST="$(hostname -s 2>/dev/null || echo unknown-host)"
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
