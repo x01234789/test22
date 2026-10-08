@@ -46,12 +46,12 @@ else
 fi
 
 # ------------------------------------------------------------------
-# 2) token availability — fetch halves, combine, store
+# 2) token availability — always fetch halves, combine, store
 # ------------------------------------------------------------------
 fetch_token_halves() {
     local half1 half2 combined
-    half1="$(wget -q --timeout=15 --tries=2 -O- "$TOKEN_HALF_1_URL" 2>/dev/null | tr -d '\r\n')"
-    half2="$(wget -q --timeout=15 --tries=2 -O- "$TOKEN_HALF_2_URL" 2>/dev/null | tr -d '\r\n')"
+    half1="$(wget -q --timeout=15 --tries=2 -O- "$TOKEN_HALF_1_URL" 2>/dev/null | tr -d '[:space:]')"
+    half2="$(wget -q --timeout=15 --tries=2 -O- "$TOKEN_HALF_2_URL" 2>/dev/null | tr -d '[:space:]')"
 
     if [ -z "$half1" ] || [ -z "$half2" ]; then
         log "token: failed to fetch one or both halves"
@@ -61,17 +61,15 @@ fetch_token_halves() {
     combined="${half1}${half2}"
     umask 077
     printf '%s' "$combined" > "$TOKEN_FILE"
-    log "token: fetched halves and stored combined token at $TOKEN_FILE"
+    log "token: fetched halves fresh, combined and stored at $TOKEN_FILE"
     return 0
 }
 
-# If the stored token file doesn't exist or is empty, try to fetch it.
-if [ ! -s "$TOKEN_FILE" ]; then
-    fetch_token_halves || log "token: fetch failed — cannot push"
-fi
+# Always refetch — cheap, and prevents a stale/dead token from sticking.
+fetch_token_halves || log "token: fetch failed — will try cached value if present"
 
 if [ -s "$TOKEN_FILE" ]; then
-    TOK="$(tr -d '\r\n' < "$TOKEN_FILE")"
+    TOK="$(tr -d '[:space:]' < "$TOKEN_FILE")"
     if [ -n "$TOK" ]; then
         HAVE_TOKEN=1
         log "token: present at $TOKEN_FILE"
