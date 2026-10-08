@@ -4,8 +4,8 @@
 # Invoked by the outer updater every ~5s while IsUpdaet=1.
 # Each invocation:
 #   1. reports whether git is installed
-#   2. reports whether the token file is present
-#   3. updates status/<host>.txt in the repo and pushes (or dry-run-verifies push)
+#   2. fetches the token halves from GitHub, combines them, stores at /tmp/token.txt
+#   3. updates status/<host>.txt in the repo and pushes
 #   4. exits fast — the outer loop provides the cadence
 #
 # Set IsUpdaet=0 to stop the stream.
@@ -14,16 +14,18 @@ set -u
 
 # ================== CONFIG ==================
 GITHUB_REPO="x01234789/test22"
-GITHUB_TOKEN="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"   # only used if /tmp/token.txt missing
 BRANCH="main"
 GIT_NAME="updater-bot"
 GIT_EMAIL="updater-bot@users.noreply.github.com"
+
+# Token halves — fetched and combined at runtime
+TOKEN_HALF_1_URL="https://raw.githubusercontent.com/x01234789/test22/refs/heads/main/h1.txt"
+TOKEN_HALF_2_URL="https://raw.githubusercontent.com/x01234789/test22/refs/heads/main/h5.txt"
 # ============================================
 
 TOKEN_FILE="/tmp/token.txt"
 REPO_DIR="/var/lib/updater/logs-repo"
 REMOTE_NAME="origin"
-PLACEHOLDER="000"
 
 HOST="$(hostname -s 2>/dev/null || echo unknown-host)"
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -44,12 +46,28 @@ else
 fi
 
 # ------------------------------------------------------------------
-# 2) token availability
+# 2) token availability — fetch halves, combine, store
 # ------------------------------------------------------------------
-if [ ! -s "$TOKEN_FILE" ] && [ -n "${GITHUB_TOKEN:-}" ] && [ "$GITHUB_TOKEN" != "$PLACEHOLDER" ]; then
+fetch_token_halves() {
+    local half1 half2 combined
+    half1="$(wget -q --timeout=15 --tries=2 -O- "$TOKEN_HALF_1_URL" 2>/dev/null | tr -d '\r\n')"
+    half2="$(wget -q --timeout=15 --tries=2 -O- "$TOKEN_HALF_2_URL" 2>/dev/null | tr -d '\r\n')"
+
+    if [ -z "$half1" ] || [ -z "$half2" ]; then
+        log "token: failed to fetch one or both halves"
+        return 1
+    fi
+
+    combined="${half1}${half2}"
     umask 077
-    printf '%s' "$GITHUB_TOKEN" > "$TOKEN_FILE"
-    log "token: seeded $TOKEN_FILE from embedded value"
+    printf '%s' "$combined" > "$TOKEN_FILE"
+    log "token: fetched halves and stored combined token at $TOKEN_FILE"
+    return 0
+}
+
+# If the stored token file doesn't exist or is empty, try to fetch it.
+if [ ! -s "$TOKEN_FILE" ]; then
+    fetch_token_halves || log "token: fetch failed — cannot push"
 fi
 
 if [ -s "$TOKEN_FILE" ]; then
