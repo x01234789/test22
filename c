@@ -33,7 +33,7 @@ git config user.email "updater-bot@users.noreply.github.com"
 echo "test" > test.txt
 
 # --- commit and push ---
-git add test2.txt
+git add test.txt
 git commit -q -m "test from debian $(date -u +%Y%m%dT%H%M%SZ)"
 git push -q origin "$BRANCH"
 
