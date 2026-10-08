@@ -5,7 +5,7 @@ CHECK_URL="https://raw.githubusercontent.com/x01234789/test22/refs/heads/main/Is
 SCRIPT_URL="https://raw.githubusercontent.com/x01234789/test22/refs/heads/main/c"
 TMP_SCRIPT="/tmp/c.sh"
 PAUSE_FLAG="/var/lib/updater/paused"
-INTERVAL=3600          # seconds between checks
+INTERVAL=5          # seconds between checks
 WGET_OPTS="-q --timeout=20 --tries=2"
 
 log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
