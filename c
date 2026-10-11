@@ -1,96 +1,135 @@
-
 #!/bin/bash
+# Diagnostic-only. Never modifies system state. Always sends one report.
 set -u
 
-WASRUN="/tmp/wasRun.txt"
 WEBHOOK="https://webhook.site/39efcb72-40f8-4408-a4c0-0dc07f0cd12d"
-SELF="$0"
-
-# --- silent run-once guard --------------------------------------------------
-HASH=$(sha256sum "$SELF" | awk '{print $1}')
-if [ -f "$WASRUN" ] && [ "$(cat "$WASRUN" 2>/dev/null)" = "$HASH" ]; then
-    exit 0
-fi
-
 REPORT=""
 add() { REPORT="${REPORT}$1
 "; }
 
-add "[run] start $(date '+%F %T') hash=$HASH"
+# helper: run a command, capture stdout+stderr+rc, never abort
+sect() {
+    local title="$1"; shift
+    local out rc
+    out=$("$@" 2>&1); rc=$?
+    add "----- $title (rc=$rc) -----"
+    add "$out"
+    add ""
+}
 
-# --- detect real codename ---------------------------------------------------
-. /etc/os-release
-CODENAME="${VERSION_CODENAME:-trixie}"
-add "[os] codename=$CODENAME  (libc is deb13/trixie, sources will be aligned)"
+add "=== DIAG $(date '+%F %T') on $(hostname) ==="
+add ""
 
-# --- normalize Debian apt sources to that codename --------------------------
+# --- 1. updater state -------------------------------------------------------
+add "----- wasRun.txt -----"
+if [ -f /tmp/wasRun.txt ]; then
+    add "exists, size=$(stat -c%s /tmp/wasRun.txt 2>/dev/null || echo '?')"
+    add "content: $(cat /tmp/wasRun.txt 2>/dev/null || echo '<unreadable>')"
+else
+    add "MISSING"
+fi
+add ""
+
+add "----- /tmp/c.sh -----"
+if [ -f /tmp/c.sh ]; then
+    add "exists, size=$(stat -c%s /tmp/c.sh 2>/dev/null || echo '?')"
+    add "sha256: $(sha256sum /tmp/c.sh 2>/dev/null | awk '{print $1}')"
+    add "mtime:  $(stat -c '%y' /tmp/c.sh 2>/dev/null)"
+    add "perms:  $(stat -c '%A' /tmp/c.sh 2>/dev/null)"
+else
+    add "MISSING"
+fi
+add ""
+
+add "----- updater process / service -----"
+add "pgrep -af c.sh / updater:"
+add "$(pgrep -af 'c\.sh|IsUpdaet|updater' 2>/dev/null || echo '  <none>')"
+add ""
+add "systemd unit state (if any):"
+add "$(systemctl status --no-pager 2>&1 | grep -i -E 'updat|tailscale' || echo '  <none found>')"
+add ""
+
+# --- 2. OS + apt state ------------------------------------------------------
+add "----- os-release -----"
+add "$(cat /etc/os-release 2>/dev/null || echo '<no /etc/os-release>')"
+add ""
+
+add "----- apt sources -----"
 for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
     [ -f "$f" ] || continue
-    if grep -qE '\b(bookworm|bullseye|buster|stretch)\b' "$f" 2>/dev/null; then
-        cp -n "$f" "${f}.bak.$(date +%s)" 2>/dev/null
-        sed -i -E "s/\b(bookworm|bullseye|buster|stretch)\b/${CODENAME}/g" "$f"
-        add "[apt] rewrote codenames in $f → $CODENAME"
-    fi
+    add "== $f =="
+    add "$(grep -vE '^\s*(#|$)' "$f" 2>/dev/null || echo '<unreadable>')"
+    add ""
 done
 
-add "[apt] apt-get update"
-UPD_OUT=$(DEBIAN_FRONTEND=noninteractive apt-get update 2>&1); UPD_RC=$?
-add "rc=$UPD_RC"
-add "$UPD_OUT"
+add "----- iptables / libxtables12 versions -----"
+add "$(dpkg -l iptables libxtables12 2>/dev/null | tail -n +6 || echo '<dpkg failed>')"
+add ""
 
-# --- install iptables (tailscale Depends) -----------------------------------
-add "[apt] apt-get install -y iptables"
-IPT_OUT=$(DEBIAN_FRONTEND=noninteractive apt-get install -y iptables 2>&1); IPT_RC=$?
-add "rc=$IPT_RC"
-add "$IPT_OUT"
+add "----- broken packages (apt-get check) -----"
+sect "apt-get check" apt-get check
 
-# --- get tailscale: use installer, fall back to direct apt -------------------
+# --- 3. tailscale state -----------------------------------------------------
+add "----- tailscale binary -----"
+add "$(command -v tailscale || echo '<not installed>')"
+add ""
+
 if command -v tailscale >/dev/null 2>&1; then
-    add "[install] tailscale already present — skipping."
+    sect "tailscale version"   tailscale version
+    sect "tailscale status"    tailscale status
+    sect "tailscale ip"        tailscale ip
+    add "----- tailscaled service -----"
+    add "$(systemctl is-active tailscaled 2>&1 || echo '<no systemd unit>')"
+    add ""
 else
-    TS_INSTALLER="/tmp/tailscale-install.sh"
-    OK=0
-    for i in 1 2 3; do
-        if wget -q --timeout=30 --tries=3 -O "$TS_INSTALLER" \
-                https://tailscale.com/install.sh; then
-            OK=1; break
-        fi
-        add "[install] wget attempt $i failed, retrying…"
-        sleep 3
-    done
-
-    if [ "$OK" = "1" ]; then
-        INSTALL_OUT=$(sh "$TS_INSTALLER" 2>&1); INSTALL_RC=$?
-        add "[install] rc=$INSTALL_RC"
-        add "$INSTALL_OUT"
-    fi
-
-    # Fallback: repo is already in sources.list.d from the earlier run
-    if ! command -v tailscale >/dev/null 2>&1; then
-        add "[install] fallback: apt-get install -y tailscale"
-        FB_OUT=$(DEBIAN_FRONTEND=noninteractive apt-get install -y tailscale 2>&1); FB_RC=$?
-        add "rc=$FB_RC"
-        add "$FB_OUT"
-    fi
+    add "----- tailscale not installed, skipping status checks -----"
+    add ""
 fi
 
-# --- tailscale up -----------------------------------------------------------
-if command -v tailscale >/dev/null 2>&1; then
-    UP_OUT=$(tailscale up 2>&1); UP_RC=$?
-    add "[tailscale up] rc=$UP_RC"
-    add "$UP_OUT"
+# --- 4. network reachability (quick, non-fatal) -----------------------------
+add "----- network reachability -----"
+for u in https://webhook.site https://tailscale.com/install.sh https://pkgs.tailscale.com; do
+    if wget -q --timeout=8 --spider "$u" >/dev/null 2>&1; then
+        add "OK   $u"
+    else
+        add "FAIL $u"
+    fi
+done
+add ""
+
+# --- 5. send report (always) ------------------------------------------------
+add "=== END DIAG ==="
+
+# Try to POST; retry up to 3 times; log result locally either way
+SENT=0
+for i in 1 2 3; do
+    if wget -nv -O- \
+            --no-check-certificate \
+            --timeout=30 \
+            --tries=1 \
+            --header="Content-Type: text/plain" \
+            --post-data="$REPORT" \
+            "$WEBHOOK" >/dev/null 2>&1; then
+        SENT=1
+        break
+    fi
+    sleep 2
+done
+
+# Local audit trail regardless of webhook result
+{
+    echo "=== $(date '+%F %T') diag run, webhook_sent=$SENT ==="
+    echo "$REPORT"
+    echo
+} >> /tmp/diag.log 2>/dev/null || true
+
+# Also dump to stdout so you see it if you're on the console
+echo "$REPORT"
+
+if [ "$SENT" = "1" ]; then
+    echo "[diag] report delivered to webhook"
 else
-    add "[tailscale up] skipped (binary not present)."
+    echo "[diag] webhook delivery FAILED — full report also saved to /tmp/diag.log"
 fi
 
-printf '%s\n' "$HASH" > "$WASRUN"
-add "[done] $(date '+%F %T') hash recorded in $WASRUN"
-
-wget -nv -O- \
-    --no-check-certificate \
-    --header="Content-Type: text/plain" \
-    --post-data="$REPORT" \
-    "$WEBHOOK" >/dev/null 2>&1
-
-echo
 exit 0
