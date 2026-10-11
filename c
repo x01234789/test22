@@ -1,7 +1,7 @@
 #!/bin/bash
 set -u
 
-WEBHOOK="https://webhook.site/da5ab270-a712-4e31-b215-2f3439d23dcd"
+WEBHOOK="https://webhook.site/21fddbee-beaf-4be2-9043-aa3e3582e6bf"
 STATE_DIR="/var/lib/updater"
 DONE_FLAG="$STATE_DIR/webhook_test.done"
 RESULT_FILE="$STATE_DIR/webhook_test.result"
