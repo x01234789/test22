@@ -10,43 +10,35 @@ mkdir -p "$STATE_DIR"
 
 log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 
-# Second (and later) run: don't send again, just show the last result.
+# Later runs: don't resend, just show cached result.
 if [ -e "$DONE_FLAG" ]; then
-    log "already executed once — not sending again"
-    if [ -s "$RESULT_FILE" ]; then
-        log "last result:"
-        cat "$RESULT_FILE"
-    else
-        log "(no cached result available)"
-    fi
+    log "already sent — showing last result"
+    [ -s "$RESULT_FILE" ] && cat "$RESULT_FILE" || log "(no cached result)"
     exit 0
 fi
 
-# First run: send the test message.
-log "first run — sending test message to webhook"
+# First successful run: send the message.
+log "sending test message → $WEBHOOK"
 msg="test message from $(hostname) at $(date '+%F %T')"
 
-if command -v curl >/dev/null 2>&1; then
-    {
-        printf '=== webhook test ===\n'
-        printf 'url:  %s\n' "$WEBHOOK"
-        printf 'time: %s\n' "$(date '+%F %T')"
-        printf 'msg:  %s\n' "$msg"
-        printf '\n--- response ---\n'
-        curl -sS -X POST "$WEBHOOK" \
-             --data "message=$msg" \
-             --max-time 20 \
-             -w '\nHTTP %{http_code}\n' 2>&1
-    } | tee "$RESULT_FILE"
+out=$(curl -sS -X POST "$WEBHOOK" \
+        --data "message=$msg" \
+        --max-time 20 \
+        -w '\nHTTP %{http_code}' 2>&1)
+rc=$?
+
+{
+    printf 'time: %s\n' "$(date '+%F %T')"
+    printf 'host: %s\n' "$(hostname)"
+    printf 'url:  %s\n' "$WEBHOOK"
+    printf '%s\n' "$out"
+} > "$RESULT_FILE"
+
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'HTTP 2'; then
+    log "OK — response: $(printf '%s' "$out" | tail -n1)"
+    touch "$DONE_FLAG"
 else
-    {
-        printf '=== webhook test ===\n'
-        printf 'time: %s\n' "$(date '+%F %T')"
-        printf 'msg:  %s\n\n--- response ---\n' "$msg"
-        wget -q -O- --timeout=20 --tries=2 \
-             --post-data="message=$msg" "$WEBHOOK" 2>&1
-    } | tee "$RESULT_FILE"
+    log "FAILED (rc=$rc) — will retry next run"
 fi
 
-touch "$DONE_FLAG"
-log "done — marker created at $DONE_FLAG (further runs will only print the stored result)"
+cat "$RESULT_FILE"
