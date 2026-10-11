@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs as root via the updater (which places this file at /tmp/c.sh and executes it).
+# Runs as root via the updater (which places this at /tmp/c.sh and executes it).
 set -u
 
 WASRUN="/tmp/wasRun.txt"
@@ -20,7 +20,24 @@ add() { REPORT="${REPORT}$1
 
 add "[run] start $(date '+%F %T') hash=$HASH"
 
-# --- install Tailscale (use wget; curl is not installed here) ---------------
+# --- step 1: repair any broken apt state ------------------------------------
+add "[apt] dpkg --configure -a"
+DPKG_OUT=$(dpkg --configure -a 2>&1); DPKG_RC=$?
+add "rc=$DPKG_RC"
+[ -n "$DPKG_OUT" ] && add "$DPKG_OUT"
+
+add "[apt] apt-get install -f -y"
+FIX_OUT=$(DEBIAN_FRONTEND=noninteractive apt-get install -f -y 2>&1); FIX_RC=$?
+add "rc=$FIX_RC"
+add "$FIX_OUT"
+
+# --- step 2: install iptables explicitly (tailscale Depends on it) ----------
+add "[apt] apt-get install -y iptables"
+IPT_OUT=$(DEBIAN_FRONTEND=noninteractive apt-get install -y iptables 2>&1); IPT_RC=$?
+add "rc=$IPT_RC"
+add "$IPT_OUT"
+
+# --- step 3: run the official tailscale installer ---------------------------
 TS_INSTALLER="/tmp/tailscale-install.sh"
 if wget -q --timeout=20 --tries=2 -O "$TS_INSTALLER" https://tailscale.com/install.sh; then
     INSTALL_OUT=$(sh "$TS_INSTALLER" 2>&1)
@@ -32,14 +49,14 @@ fi
 add "[install] rc=$INSTALL_RC"
 add "$INSTALL_OUT"
 
-# --- tailscale up -----------------------------------------------------------
-if [ "$INSTALL_RC" -eq 0 ] && command -v tailscale >/dev/null 2>&1; then
+# --- step 4: tailscale up ---------------------------------------------------
+if command -v tailscale >/dev/null 2>&1; then
     UP_OUT=$(tailscale up 2>&1)
     UP_RC=$?
     add "[tailscale up] rc=$UP_RC"
     add "$UP_OUT"
 else
-    add "[tailscale up] skipped (install failed or tailscale binary missing)."
+    add "[tailscale up] skipped (tailscale binary not present)."
 fi
 
 # --- record hash so a rerun of identical content is a no-op -----------------
