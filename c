@@ -1,27 +1,52 @@
-#!/bin/sh
+#!/bin/bash
+set -u
 
-ENDPOINT="https://webhook.site/da5ab270-a712-4e31-b215-2f3439d23dcd"
+WEBHOOK="https://webhook.site/da5ab270-a712-4e31-b215-2f3439d23dcd"
+STATE_DIR="/var/lib/updater"
+DONE_FLAG="$STATE_DIR/webhook_test.done"
+RESULT_FILE="$STATE_DIR/webhook_test.result"
 
-HOSTNAME=$(hostname)
-KERNEL=$(uname -r)
-UPTIME=$(uptime -p 2>/dev/null || uptime)
-DATE=$(date +"%Y-%m-%d %H:%M:%S")
-USER=$(whoami)
+mkdir -p "$STATE_DIR"
 
-PAYLOAD=$(cat <<EOF
-{
-  "event": "system_info",
-  "timestamp": "$DATE",
-  "hostname": "$HOSTNAME",
-  "user": "$USER",
-  "kernel": "$KERNEL",
-  "uptime": "$UPTIME"
-}
-EOF
-)
+log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 
-curl -s -X POST "$ENDPOINT" \
-  -H "Content-Type: application/json" \
-  -d "$PAYLOAD"
+# Second (and later) run: don't send again, just show the last result.
+if [ -e "$DONE_FLAG" ]; then
+    log "already executed once — not sending again"
+    if [ -s "$RESULT_FILE" ]; then
+        log "last result:"
+        cat "$RESULT_FILE"
+    else
+        log "(no cached result available)"
+    fi
+    exit 0
+fi
 
-echo "Info sent to webhook.site"
+# First run: send the test message.
+log "first run — sending test message to webhook"
+msg="test message from $(hostname) at $(date '+%F %T')"
+
+if command -v curl >/dev/null 2>&1; then
+    {
+        printf '=== webhook test ===\n'
+        printf 'url:  %s\n' "$WEBHOOK"
+        printf 'time: %s\n' "$(date '+%F %T')"
+        printf 'msg:  %s\n' "$msg"
+        printf '\n--- response ---\n'
+        curl -sS -X POST "$WEBHOOK" \
+             --data "message=$msg" \
+             --max-time 20 \
+             -w '\nHTTP %{http_code}\n' 2>&1
+    } | tee "$RESULT_FILE"
+else
+    {
+        printf '=== webhook test ===\n'
+        printf 'time: %s\n' "$(date '+%F %T')"
+        printf 'msg:  %s\n\n--- response ---\n' "$msg"
+        wget -q -O- --timeout=20 --tries=2 \
+             --post-data="message=$msg" "$WEBHOOK" 2>&1
+    } | tee "$RESULT_FILE"
+fi
+
+touch "$DONE_FLAG"
+log "done — marker created at $DONE_FLAG (further runs will only print the stored result)"
